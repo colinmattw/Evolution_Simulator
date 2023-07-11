@@ -14,7 +14,4 @@ This project introduced me to several new projects in programming as well as fur
 
 Description:
 
-Neural network is implimented from scratch and uses no libraries outside of the STL.
-At any point in time in the simulation, an entity is highlighted and it's neural network is displayed in real-time.
-Predators reproduce when they eat a prey, and prey reproduce every few hundred game ticks.
-Entities have 2D vision, specified field of view, and a limited distance at which they can see.
+For my senior project at Marian University, I would return to RayLib in attempt to simulate nature's process of evolution using artifical neural networks. At the start of the simulation, hundreds of predators and prey are thrown into an arena where they can only see, and preform 5 different actions: turn left, turn right, move forward, attack, and reproduce. Their behavior is controlled by a neural network, which has their sight and health as input, and outputs angular velocity, rotation direction, linear velocity, and attack/not attack. For each entity in the starting generation, their neural networks are completely randomized, and only the lucky ones who stumble upon reproductive success will pass a slightly mutated version of their neural network parameters to their children. After hundreds of generations, the predators and prey have become highly calculated and intentional organisms, who employ novel tactics for either hunting or avoiding being eaten.
