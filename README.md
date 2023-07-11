@@ -1,5 +1,5 @@
 # Evolution_Simulator
-Senior project for CS which simulates an evolving predator-prey system. Each entity is controlled by a neural network which mutates every generation if it reproduces.
+(THIS PROJECT IS NOT FINISHED) Senior project for CS which simulates an evolving predator-prey system. Each entity is controlled by a neural network which mutates every generation if it reproduces.
 ---------------------------------------------------
 Created by Colin M Wareham
 ---------------------------------------------------
