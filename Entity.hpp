@@ -4,6 +4,8 @@
 #include <ctime>
 #include <vector>
 #include "raylib.h"
+#include "Wall.hpp"
+#include "Food.hpp"
 #include <cmath>
 #include <tuple>
 
@@ -11,12 +13,17 @@ class Entity
 {
     private:
         //input neurons
-        int health;
+        float health;
+        float damage;
+        float fov = 56.722821718;
+        float viewDist = 100;
         std::tuple <Entity*, float> sight[12];
+        std::tuple <Wall*, float> wallSight[12];
+        std::tuple <Food*, float> foodSight[12];
 
         //output neurons
         bool rotationDir;
-        bool attack;
+        bool attack = true;
         float linearSpeed;
         float angularSpeed;
 
@@ -24,6 +31,9 @@ class Entity
         NeuralNetwork* neuralNet;
         NeuralNetwork* netToPassOn;
         bool isPrey;
+        float speedMultiplyer;
+        std::vector<Entity*> entitiesOfInterest;
+        std::vector<Food*> foodOfInterest;
 
         //other info
         Vector2 pos;
@@ -35,174 +45,251 @@ class Entity
         int gameTicksSurvived;
         int children = 0;
         Entity* parent;
+        int lineageCount;
         bool hadDinnerThisTick = false;
         int ticksSinceDinner = 0;
         bool isTruman = false;
 
+        float ReturnWallorFood(std::tuple<Wall*, float> wall, std::tuple<Food*, float> food)
+        {
+            if(std::get<0>(wall) == nullptr)
+            {
+                return std::get<1>(wall);
+            }
+            else
+            {
+                return std::get<1>(food);
+            }
+        }
+
+        float FastSquareRoot(float x, float epsilon = 1e-3) 
+        {
+            // Initial guess for the square root
+            double guess = x / 2.0;
+
+            while (std::abs(guess * guess - x) > epsilon) {
+                guess = 0.5 * (guess + x / guess); // Apply Newton-Raphson iteration
+            }
+
+            return guess;
+        }
+        
+        float FastTan(float x) 
+        {
+            // Map the angle to a range of [-pi/2, pi/2]
+            x = fmodf(x, 3.1415);
+
+            if (x > 3.1415 / 2.0f)
+                x -= 3.1415;
+
+            if (x < -3.1415 / 2.0f)
+                x += 3.1415;
+
+            // Calculate the tangent using a polynomial approximation
+            float x2 = x * x;
+            float x3 = x * x2;
+            float x5 = x3 * x2;
+            float x7 = x5 * x2;
+
+            return x + (1.0f / 3.0f) * x3 + (2.0f / 15.0f) * x5 + (17.0f / 315.0f) * x7;
+        }
         bool CheckCollisionEntity(Entity* e, Vector2 point)
         {
-            float dist = sqrt(pow((e->GetPos().x - point.x), 2) + pow((e->GetPos().y - point.y), 2));
+            float dist = FastSquareRoot(pow((e->GetPos().x - point.x), 2) + pow((e->GetPos().y - point.y), 2));
             return dist < e->GetRadius();
+        }
+
+        Vector2* CalculateBoundingTriangle(Vector2* coords) 
+        {
+            float rFov = fov * (3.1416/180) * 0.5f;
+            float hypotenuseLength = viewDist / cosf(rFov);
+
+            coords[0] = pos;
+            coords[1] = {(hypotenuseLength * cosf(orientation + rFov)) + pos.x, hypotenuseLength * (sinf(orientation + rFov)) + pos.y};
+            coords[2] = {(hypotenuseLength * cosf(orientation - rFov)) + pos.x, hypotenuseLength * (sinf(orientation - rFov)) + pos.y};;
+
+            /*DrawCircle(coords[0].x, coords[0].y, 5, PURPLE);
+            DrawCircle(coords[1].x, coords[1].y, 5, PURPLE);
+            DrawCircle(coords[2].x, coords[2].y, 5, PURPLE);
+            DrawCircle(viewDist + pos.x, 500, 5, PURPLE);*/
+
+            return coords;
+        }
+
+        bool CheckCircleAndLineSegmentCollision(Vector2 circleCenter, float circleRadius, Vector2 p1, Vector2 p2) {
+            // Calculate the squared radius of the circle to avoid square roots.
+            float radiusSquared = circleRadius * circleRadius;
+
+            // Calculate the vector from the start of the line segment to the circle's center.
+            float dx = circleCenter.x - p1.x;
+            float dy = circleCenter.y - p1.y;
+
+            // Calculate the squared length of the line segment.
+            float segmentLengthSquared = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
+
+            // Calculate the dot product of the vector and the line segment.
+            float dotProduct = dx * (p2.x - p1.x) + dy * (p2.y - p1.y);
+
+            if (dotProduct < 0.0f) {
+                // The closest point on the line is before the start of the segment.
+                return (dx * dx + dy * dy <= radiusSquared);
+            }
+
+            if (dotProduct > segmentLengthSquared) {
+                // The closest point on the line is after the end of the segment.
+                float dx2 = circleCenter.x - p2.x;
+                float dy2 = circleCenter.y - p2.y;
+                return (dx2 * dx2 + dy2 * dy2 <= radiusSquared);
+            }
+
+            // The closest point on the line is within the segment.
+            float closestX = p1.x + (dotProduct / segmentLengthSquared) * (p2.x - p1.x);
+            float closestY = p1.y + (dotProduct / segmentLengthSquared) * (p2.y - p1.y);
+
+            float distanceSquared = (circleCenter.x - closestX) * (circleCenter.x - closestX) + (circleCenter.y - closestY) * (circleCenter.y - closestY);
+
+            return (distanceSquared <= radiusSquared);
+        }
+
+        bool IsPointInsideTriangle(Vector2 p, Vector2 a, Vector2 b, Vector2 c) 
+        {
+            // Calculate the barycentric coordinates of point p.
+            float detT = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+            float alpha = ((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / detT;
+            float beta = ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / detT;
+            float gamma = 1.0f - alpha - beta;
+
+            // Check if the point is inside the triangle.
+            return (alpha >= 0.0f && beta >= 0.0f && gamma >= 0.0f);
+        }
+
+        bool CheckCollisionWall(Wall* wall, Vector2 loc)
+        {
+            Vector2* coords = wall->GetCoords();
+            bool collisionDetected = false;
+
+            if(CheckCircleAndLineSegmentCollision(loc, radius, coords[0], coords[1]))
+            {
+                return true;
+            }
+            else if(CheckCircleAndLineSegmentCollision(loc, radius, coords[0], coords[2]))
+            {
+                return true;
+            }
+            else if(CheckCircleAndLineSegmentCollision(loc, radius, coords[1], coords[3]))
+            {
+                return true;
+            }
+            else if(CheckCircleAndLineSegmentCollision(loc, radius, coords[2], coords[3]))
+            {
+                return true;
+            }
+            else
+            {
+                return false;
+            }
         }
 
     public:
 
         //use this for first gen
-        Entity(bool inIsPrey)
+        Entity(bool inIsPrey, int xBound, int yBound)
         {
-            if(inIsPrey)
-            {
-                health = 10;
-            }
-            else
-            {
-                health = 100;
-            }
             for(int i = 0; i < 12; ++i)
             {
-                std::make_tuple(nullptr, 0);
+                sight[i] = std::make_tuple(nullptr, 0);
+                wallSight[i] = std::make_tuple(nullptr, 0);
+                foodSight[i] = std::make_tuple(nullptr, 0);
             }
             killCount = 0;
             rotationDir = 0;
-            attack = 0;
             linearSpeed = 0;
             angularSpeed = 0;
-            neuralNet = new NeuralNetwork(13, 4, 1, 8);
+            neuralNet = new NeuralNetwork(24, 3, 1, 12);
             netToPassOn = nullptr;
             birthTime = clock();
 
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_int_distribution<int> dist(0,1000);
+            std::uniform_int_distribution<int> xDist(50,xBound);
+            std::uniform_int_distribution<int> yDist(50,yBound);
+            std::uniform_int_distribution<int> size(5,25);
 
-            pos = {(float)dist(mt), (float)dist(mt)};
-            radius = 5.0f;
+            pos = {(float)xDist(mt), (float)yDist(mt)};
+            radius = size(mt);
+            health = radius * radius;
+            speedMultiplyer = 100.0f / health;
+            damage = health / 50.0f;
             orientation = 0;
             isPrey = inIsPrey;
             willReproduce = false;
             gameTicksSurvived = 0;
             parent = nullptr;
-
-        }
-
-        Entity(Entity* inParent)
-        {
-            if(inParent->GetIsPrey())
-            {
-                health = 10;
-            }
-            else
-            {
-                health = 100;
-            }
-            for(int i = 0; i < 12; ++i)
-            {
-                std::make_tuple(nullptr, 0);
-            }
-            killCount = 0;
-            rotationDir = 0;
-            attack = 0;
-            linearSpeed = 0;
-            angularSpeed = 0;
-            if(inParent->GetNetToPassOn() == nullptr)
-            {   
-                inParent->CreateNetToPassOn(4);
-                neuralNet = inParent->GetNetToPassOn()->CopyNet();
-            }
-            else
-            {
-                neuralNet = inParent->GetNetToPassOn()->CopyNet();
-            }
-
-            netToPassOn = nullptr;
-            birthTime = clock();
-
-            std::random_device dev;
-            std::mt19937 mt(dev());
-            std::uniform_int_distribution<int> dist(0,1000);
-
-            pos = {(float)dist(mt), (float)dist(mt)};
-            radius = 5.0f;
-            orientation = 0;
-            isPrey = inParent->GetIsPrey();
-            willReproduce = false;
-            gameTicksSurvived = 0;
-            SetParent(inParent);
+            lineageCount = 0;
+            
 
         }
 
          Entity(Vector2 inPos, bool inIsPrey)
         {
-            if(inIsPrey)
-            {
-                health = 10;
-            }
-            else
-            {
-                health = 100;
-            }
             for(int i = 0; i < 12; ++i)
             {
                 sight[i] = std::make_tuple(nullptr, 0.0f);
+                wallSight[i] = std::make_tuple(nullptr, 0.0f);
+                wallSight[i] = std::make_tuple(nullptr, 0.0f);
             }
             killCount = 0;
             rotationDir = 0;
-            attack = 0;
-            linearSpeed = 3;
-            angularSpeed = 0.025;
-            neuralNet = new NeuralNetwork(13, 4, 1, 8);
+            linearSpeed = 0;
+            angularSpeed = 0;
+            neuralNet = new NeuralNetwork(24, 3, 1, 12);
             netToPassOn = nullptr;
             birthTime = clock();
 
+            std::random_device dev;
+            std::mt19937 mt(dev());
+            std::uniform_int_distribution<int> size(5,25);
+
+
+            radius = size(mt);
+            health = radius * radius;
+            speedMultiplyer = 100.0f / health;
+            damage = health / 50.0f;
 
             pos = inPos;
-            radius = 5.0f;
             orientation = 0;
             isPrey = inIsPrey;
             willReproduce = false;
             gameTicksSurvived = 0;
             parent = nullptr;
+            lineageCount = 0;
         }
 
         //use this for subsiquent gens
         Entity(Entity* inParent, Vector2 spawnPoint)
         {
-            if(inParent->GetIsPrey())
-            {
-                health = 10;
-            }
-            else
-            {
-                health = 100;
-            }
             for(int i = 0; i < 12; ++i)
             {
-                std::make_tuple(nullptr, 0);
+                sight[i] = std::make_tuple(nullptr, 0);
+                wallSight[i] = std::make_tuple(nullptr, 0);
+                foodSight[i] = std::make_tuple(nullptr, 0);
             }
             killCount = 0;
             rotationDir = 0;
-            attack = 0;
             linearSpeed = 0;
             angularSpeed = 0;
-            if(inParent->GetNetToPassOn() == nullptr)
-            {   
-                inParent->CreateNetToPassOn(4);
-                neuralNet = inParent->GetNetToPassOn()->CopyNet();
-            }
-            else
-            {
-                neuralNet = inParent->GetNetToPassOn()->CopyNet();
-            }
             birthTime = clock();
-
-            radius = 5.0f;
-            orientation = 0;
+            
+            radius = 10.0f;
+            orientation = inParent->GetOrientation();
             pos = spawnPoint;
             isPrey = inParent->GetIsPrey();
             willReproduce = false;
             gameTicksSurvived = 0;
             netToPassOn = nullptr;
             SetParent(inParent);
+            neuralNet = inParent->GetNetToPassOn()->CopyNet();
+            lineageCount = parent->GetLineageCount() + 1;
             
         }
         ~Entity(){}
@@ -230,43 +317,43 @@ class Entity
             {
                 input.push_back(std::get<1>(sight[i]));
             }
-            if(isPrey)
+            for(int i = 0; i < 12; ++i)
             {
-                input.push_back((float)(health / 10));
+                
+                input.push_back(ReturnWallorFood(wallSight[i], foodSight[i]));
             }
-            else
-            {
-                input.push_back((float)(health / 100));
-            }
-
             neuralNet->ComputeOutputLayer(input);
 
             //writeback outputs
             rotationDir = round(neuralNet->returnOutput()[0]->getValue());
             angularSpeed = neuralNet->returnOutput()[1]->getValue();
-            attack = round(neuralNet->returnOutput()[2]->getValue());
-            linearSpeed = neuralNet->returnOutput()[3]->getValue();
+            linearSpeed = neuralNet->returnOutput()[2]->getValue();
 
             hadDinnerThisTick = false;
         }
 
         void drawEntity()
         {   
+            Color g;
+            Color r;
+            Color b;
+            if(isTruman)
+            {
+                b = BLUE;
+                b.a = ((health / pow(radius, 2)) * 255);
+                DrawCircle((int)pos.x, (int)pos.y, radius + 3, b);
+            }
             if(isPrey)
             {
-                DrawCircle((int)pos.x, (int)pos.y, radius, GREEN);
+                g = GREEN;
+                g.a = ((health / pow(radius, 2)) * 255);
+                DrawCircle(pos.x, pos.y, radius, g);
             }
             else
             {
-                if(isTruman)
-                {
-                    DrawCircle((int)pos.x, (int)pos.y, radius + 2, BLUE);
-                    DrawCircle((int)pos.x, (int)pos.y, radius, RED);
-                }
-                else
-                {
-                    DrawCircle((int)pos.x, (int)pos.y, radius, RED);
-                }
+                r = RED;
+                r.a = ((health / pow(radius, 2)) * 255);
+                DrawCircle((int)pos.x, (int)pos.y, radius, r);
             }
             Vector2 v1 = {(radius * (float)cos(orientation)) + pos.x, (radius * (float)sin(orientation)) + pos.y};
             Vector2 v2 = {(radius * (float)cos(((2*3.1416)/3) + orientation)) + pos.x, (radius * (float)sin(((2*3.1416)/3) + orientation)) + pos.y};
@@ -295,11 +382,11 @@ class Entity
         {
             if(rotationDir)
             {
-                orientation -= angularSpeed;
+                orientation -= angularSpeed * speedMultiplyer;
             }
             else
             {
-                orientation += angularSpeed;
+                orientation += angularSpeed * speedMultiplyer;
             }
         }
         
@@ -308,11 +395,23 @@ class Entity
             rotationDir = !rotationDir;
         }
 
-        void UpdatePosMove()
+        void UpdatePosMove(std::vector<Wall*> inWalls)
         {   
-            
-            pos.x += linearSpeed * (float)(cos(orientation));
-            pos.y += linearSpeed * (float)(sin(orientation));
+            bool wallCollision = false;
+            Vector2 newCoords = {(linearSpeed * (float)(cos(orientation)) * speedMultiplyer) + pos.x, (linearSpeed * (float)(sin(orientation)) * speedMultiplyer) + pos.y};
+            for(Wall* wall : inWalls)
+            {
+                if(CheckCollisionWall(wall, newCoords))
+                {
+                    wallCollision = true;
+                    break;
+                }
+            }
+            if(!wallCollision)
+            {
+                pos.x += linearSpeed * (float)(cos(orientation)) * speedMultiplyer;
+                pos.y += linearSpeed * (float)(sin(orientation)) * speedMultiplyer;
+            }
         }
 
         void SetLinearSpeed(float inSpeed)
@@ -331,156 +430,192 @@ class Entity
             return isPrey;
         }
 
-        void CollectRayData(std::vector<Entity*> entities, Vector2 arenaSize)
+        void CollectRayData(std::vector<Entity*> entities, std::vector<Wall*> wallList, std::vector<Food*> foodList, Vector2 arenaSize)
         {
-            //Fixes bug where entities are seeing other ents that have been killed
-            if((entities.size() == 1) && (entities.front() == this))
+            entitiesOfInterest.clear();
+            foodOfInterest.clear();
+
+            float rfov = fov * (3.1416/180);
+
+            Vector2 triangleCoords[3];
+
+            Vector2* boundingTriangle = CalculateBoundingTriangle(triangleCoords);
+
+            //We dont need to check collisions with ourself
+            entities.erase(std::remove(entities.begin(), entities.end(), this), entities.end());
+
+            //First filter: Calculate chebyshev distance and see if ent is inside viewdist radius
+            /*for(int i = 0; i < entities.size(); ++i)
+            {
+                Vector2 entPos = entities[i]->GetPos();
+                if(fmax(abs(entPos.x - pos.x), abs(entPos.y - pos.y)) < viewDist)
+                {
+                    entitiesOfInterest.push_back(entities[i]);
+                }
+            }*/
+
+            //Remove all the entities and food that arent either inside the bounding triangle or colliding with it
+            for(int i = 0; i < entities.size(); ++i)
+            {
+                Vector2 entPos = entities[i]->GetPos();
+                float entRadius = entities[i]->GetRadius();
+
+                //If ent is not 
+                bool keepForConsideration = false;
+                if(IsPointInsideTriangle(entPos, boundingTriangle[0], boundingTriangle[1], boundingTriangle[2]))
+                {
+                    keepForConsideration = true;
+                }
+                
+                //If the center of the ent is not inside the bounding triangle, check to see if it it at least intersects it
+                else if(CheckCircleAndLineSegmentCollision(entPos, entRadius, boundingTriangle[0], boundingTriangle[1]))
+                {
+                    keepForConsideration = true;
+                }
+                else if(CheckCircleAndLineSegmentCollision(entPos, entRadius, boundingTriangle[0], boundingTriangle[2]))
+                {
+                    keepForConsideration = true;
+                }
+                else if(CheckCircleAndLineSegmentCollision(entPos, entRadius, boundingTriangle[1], boundingTriangle[2]))
+                {
+                    keepForConsideration = true;
+                }
+                if(keepForConsideration)
+                {
+                    entitiesOfInterest.push_back(entities[i]);
+                }
+            }
+
+            for(int i = 0; i < foodList.size(); ++i)
+            {
+                Vector2 foodPos = foodList[i]->GetPos();
+                float foodRadius = foodList[i]->GetRadius();
+
+                //If food is not inside triangle
+                bool keepForConsideration = false;
+                if(IsPointInsideTriangle(foodPos, boundingTriangle[0], boundingTriangle[1], boundingTriangle[2]))
+                {
+                    keepForConsideration = true;
+                }
+
+                //If the center of the ent is not inside the bounding triangle, check to see if it it at least intersects it
+                else if(CheckCircleAndLineSegmentCollision(foodPos, foodRadius, boundingTriangle[0], boundingTriangle[1]))
+                {
+                    keepForConsideration = true;
+                }
+                else if(CheckCircleAndLineSegmentCollision(foodPos, foodRadius, boundingTriangle[0], boundingTriangle[2]))
+                {
+                    keepForConsideration = true;
+                }
+                else if(CheckCircleAndLineSegmentCollision(foodPos, foodRadius, boundingTriangle[1], boundingTriangle[2]))
+                {
+                    keepForConsideration = true;
+                }
+                if(keepForConsideration)
+                {
+                    foodOfInterest.push_back(foodList[i]);
+                }
+            }
+
+            //std::cout << entitiesOfInterest.size() << std::endl;
+            bool doTheRest = true;
+
+            //std::cout << entitiesOfInterest.size() << std::endl;
+            
+            /*
+            if(entitiesOfInterest.size() == 0)
             {
                 for(int i = 0; i < 12; ++i)
                 {
                     sight[i] = std::make_tuple(nullptr, 0.0f);
                 }
-            }
-            else
-            {
-                float fov = 90;
-                fov = fov * (3.1416/180);
-                int raylength = 75;
+                doTheRest = false;
+            }*/
+            if(doTheRest)
+            {   
+                //Start drawing rays and checking if ents are colliding with them
+                for(int currentRayindex = 0; currentRayindex < 12; ++currentRayindex)
+                {   
+                    //need direction of ray to convert to x and y coords
+                    float rayDir = orientation + (0.5 * rfov) - (currentRayindex * rfov / 11);
 
-                std::vector<Entity*> entitiesOfInterest;
-                entities.erase(std::remove(entities.begin(), entities.end(), this), entities.end());
-                for(int i = 0; i < entities.size(); ++i)
-                {
-                    int x = entities[i]->GetPos().x;
-                    int y = entities[i]->GetPos().y;
-
-                    int conditionsMet = 0;
-                    if( sqrt(std::pow((pos.x - x), 2) + std::pow((pos.y - y), 2)) <= raylength)
-                    {
-                        ++conditionsMet;
-                    }
-
-                    if((arenaSize.x - abs(pos.x - x)) < raylength)
-                    {
-                        conditionsMet += 2;
-                    }
-                    if((arenaSize.y - abs(pos.y - y)) < raylength)
-                    {
-                        ++conditionsMet += 2;
-                    }
-
-                    //Check the angle the entity in question makes with the orientation of this entity
-                    float slope_ent = (y - pos.y) / (x - pos.x);
-                    float slope_this = tan(orientation);
-                    float angle = atan((slope_ent - slope_this) / (1 + (slope_ent * slope_this)));
-                    if(abs(angle) <= (0.7 * fov))
-                    {
-                        Vector2 ent_localcoords;
-                        //First apply a translation to the coords
-                        ent_localcoords = {(x - pos.x), (y - pos.y)};
-
-                        //Next apply a rotation to match this entity's local coordinate system
-                        ent_localcoords.x = ent_localcoords.x * cos(orientation) + ent_localcoords.y * sin(orientation);
-                        ent_localcoords.y = ((-1) * ent_localcoords.x * sin(orientation)) + ent_localcoords.y * cos(orientation);
-
-                        //Check to see if the local x coordinate is negative (to see if it is behind the entity)
-                        if(ent_localcoords.x >= 0)
-                        {
-                            ++conditionsMet;
-                        }
-                    }
-
-                    //If enough conditions are met, add the entity to the list of entities to be considered for collision
-                    if(conditionsMet >= 2)
-                    {
-                        entitiesOfInterest.push_back(entities[i]);
-                    }
-                }
-                //std::cout << entitiesOfInterest.size() << std::endl;
-                bool doTheRest = true;
-
-                //std::cout << entitiesOfInterest.size() << std::endl;
-
-                if(entitiesOfInterest.size() == 0)
-                {
-                    for(int i = 0; i < 12; ++i)
-                    {
-                        sight[i] = std::make_tuple(nullptr, 0.0f);
-                    }
-                    doTheRest = !doTheRest;
-                }
-                if(doTheRest)
-                {
-                    for(int currentRayindex = 0; currentRayindex < 12; ++currentRayindex)
+                    bool entCollisionDetected = false;
+                    bool wallCollisionDetected = false;
+                    bool foodCollisionDetected = false;
+                    for(int point = 0; point <= viewDist; point += 9)
                     {   
-                        //need direction of ray to convert to x and y coords
-                        float rayDir = orientation + (0.5 * fov) - (currentRayindex * fov / 11);
+                        
+                        //Get the location of the ccurrent ray point
+                        Vector2 currentPoint = {(point * cos(rayDir) + pos.x), (point * sin(rayDir) + pos.y)};
 
-                        bool collisionDetected = false;
-                        int clostestEntityDist = 0;
-                        for(int point = 0; point < raylength; point += radius)
+                        //First check if the point hits a wall before checking if it hits other entities
+                        for(int i = 0; i < wallList.size(); ++i)
                         {   
-                            
-                            //find the location of the ccurrent ray point
-                            Vector2 currentPoint = {((radius + point) * cos(rayDir) + pos.x), ((radius + point) * sin(rayDir) + pos.y)};
-
-                            //Need to wrap the vision around the edge arena if an entity is on the edge in order to maintain consistency
-                            if(currentPoint.x < 0)
+                            wallCollisionDetected = CheckCollisionWall(wallList[i], currentPoint);
+                            if(wallCollisionDetected)
                             {
-                                currentPoint.x = currentPoint.x + arenaSize.x;
-                            }
-                            if(currentPoint.x > arenaSize.x)
-                            {
-                                currentPoint.x = currentPoint.x - arenaSize.x;
-                            }
-                            if(currentPoint.y < 0)
-                            {
-                                currentPoint.y = currentPoint.y + arenaSize.y;
-                            }
-                            if(currentPoint.y > arenaSize.y)
-                            {
-                                currentPoint.y = currentPoint.y - arenaSize.y;
-                            }
-
-                            //check collisions with all other entities
-                            for(int i = 0; i < entitiesOfInterest.size(); ++i)
-                            {
-                                if(entitiesOfInterest[i] != this)
-                                {
-                                    collisionDetected = CheckCollisionEntity(entitiesOfInterest[i], currentPoint);
-                                    if(collisionDetected)
-                                    {
-                                        if(entitiesOfInterest[i]->GetIsPrey())
-                                        {
-                                            sight[currentRayindex] = std::make_tuple(entitiesOfInterest[i], (-1.0f * (1.0f - ((float)point / (float)raylength))));
-                                            if(isTruman)
-                                            {
-                                                std::cout << std::get<1>(sight[i]) << std::endl;
-                                            }
-                                            
-                                        }
-                                        else
-                                        {
-                                            sight[currentRayindex] = std::make_tuple(entitiesOfInterest[i], (1.0f - ((float)point / (float)raylength)));
-                                            if(isTruman)
-                                            {
-                                                std::cout << std::get<1>(sight[i]) << std::endl;
-                                            }
-                                            
-                                        }
-                                        break;
-                                    }
-                                    sight[currentRayindex] = std::make_tuple(nullptr, 0.0f);
-                                }
-                            }
-                            if(collisionDetected)
-                            {
+                                wallSight[currentRayindex] = std::make_tuple(wallList[i], (-1.0f * (1.0f - ((float)point / viewDist))));
                                 break;
                             }
-                            if(isTruman)
+                            else
                             {
-                                DrawCircle(currentPoint.x, currentPoint.y, 2.0f, GRAY);
+                                wallSight[currentRayindex] = std::make_tuple(nullptr, 0.0f);
                             }
+                        }
+                        if(wallCollisionDetected)
+                        {
+                            break;
+                        }
+
+                        //First check if the point hits a food before checking if it hits other entities
+                        for(int i = 0; i < foodOfInterest.size(); ++i)
+                        {   
+                            Vector2 foodPos = foodOfInterest[i]->GetPos();
+                            foodCollisionDetected = CheckCollisionCircles({foodPos.x, foodPos.y}, foodOfInterest[i]->GetRadius(), pos, radius);
+                            if(foodCollisionDetected)
+                            {
+                                foodSight[currentRayindex] = std::make_tuple(foodOfInterest[i], (1.0f - ((float)point / viewDist)));
+                                break;
+                            }
+                            else
+                            {
+                                foodSight[currentRayindex] = std::make_tuple(nullptr, 0.0f);
+                            }
+                        }
+                        if(foodCollisionDetected)
+                        {
+                            break;
+                        }
+
+                        //Check collisions with all other entities
+                        for(int i = 0; i < entitiesOfInterest.size(); ++i)
+                        {
+                            entCollisionDetected = CheckCollisionEntity(entitiesOfInterest[i], currentPoint);
+                            if(entCollisionDetected)
+                            {
+                                if(entitiesOfInterest[i]->GetIsPrey())
+                                {
+                                    sight[currentRayindex] = std::make_tuple(entitiesOfInterest[i], (-1.0f * (1.0f - ((float)point / viewDist))));
+                                }
+                                else
+                                {
+                                    sight[currentRayindex] = std::make_tuple(entitiesOfInterest[i], (1.0f - ((float)point / viewDist)));
+                                    
+                                }
+                                break;
+                            }
+                            else
+                            {
+                                sight[currentRayindex] = std::make_tuple(nullptr, 0.0f);
+                            }
+                        }
+                        if(entCollisionDetected)
+                        {
+                            break;
+                        }
+                        if(isTruman)
+                        {
+                            //DrawCircle(currentPoint.x, currentPoint.y, 2.0f, GRAY);
                         }
                     }
                 }
@@ -492,46 +627,24 @@ class Entity
             return radius;
         }
 
-        void UpdateHealth(int damage)
+        void SetRadius(int r)
         {
-            health -= damage;
+            radius = r;
         }
 
-        int GetHealth()
+        void IncrementHealth(float change)
+        {
+            health += change;
+        }
+
+        void SetHealth(int h)
+        {
+            health = h;
+        }
+
+        float GetHealth()
         {
             return health;
-        }
-
-        void Attack()
-        {   
-            if(!isPrey)
-            {
-                std::tuple<Entity*, int> closestEntity = std::make_tuple(nullptr, 0);
-                for(int i = 0; i < 12; ++i)
-                {   
-                    if(abs(std::get<1>(sight[i])) > abs(std::get<1>(closestEntity)))
-                    {
-                        closestEntity = sight[i];
-                    }
-                }
-                if(std::get<0>(closestEntity) != nullptr)
-                {
-                    if(std::get<0>(closestEntity)->GetIsPrey())
-                    {
-                        if(abs(std::get<1>(closestEntity)) > 0.90f)
-                        {
-                            std::get<0>(closestEntity)->UpdateHealth(1);
-                        }
-                        if(std::get<0>(closestEntity)->GetHealth() <= 0)
-                        {
-                            ++killCount;
-                            hadDinnerThisTick = true;
-                            ticksSinceDinner = 0;
-                            health = 100;
-                        }
-                    }
-                }
-            }
         }
 
         void Teleport(Vector2 newPos)
@@ -539,22 +652,18 @@ class Entity
             pos = newPos;
         }
 
-        bool WillAttack()
-        {
-            return attack;
-        }
         void SetAttack(bool inAttack)
         {
             attack = inAttack;
         }
 
-        //max input value is 100, min is 0
+        //max input value is 1000, min is 0
         void CreateNetToPassOn(int mutationRate)
         {
             int mutationChance;
-            if(mutationRate > 100)
+            if(mutationRate > 1000)
             {
-                mutationChance = 100;
+                mutationChance = 1000;
             }
             else if(mutationRate < 0)
             {
@@ -570,7 +679,7 @@ class Entity
 
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_int_distribution<int> dist (0,100);
+            std::uniform_int_distribution<int> dist (0,1000);
             
             float chance;
             Weight* currentWeight;
@@ -584,11 +693,11 @@ class Entity
                     currentWeight = weights[weightIndex];
                     if(chance < (mutationChance / 2))
                     { 
-                        currentWeight->setWeight(currentWeight->getWeight() - (float)(dist(mt) / 50.0f));
+                        currentWeight->setWeight(currentWeight->getWeight() - (chance / 500.0f));
                     }
                     else
                     {
-                        currentWeight->setWeight(currentWeight->getWeight() + (float)(dist(mt) / 50.0f));
+                        currentWeight->setWeight(currentWeight->getWeight() + (chance / 500.0f));
                     }
                 }
             }
@@ -600,22 +709,71 @@ class Entity
                     currentNeuron = neurons[neuronIndex];
                     if(chance < (mutationChance / 2))
                     {
-                        currentNeuron->SetBias(currentNeuron->getValue() - (float)(dist(mt) / 50.0f));
+                        currentNeuron->SetBias(currentNeuron->getValue() - (chance / 500.0f));
                     }
                     else
                     {
-                        currentNeuron->SetBias(currentNeuron->getValue() + (float)(dist(mt) / 50.0f));
+                        currentNeuron->SetBias(currentNeuron->getValue() + (chance / 500.0f));
                     }
                 }
             }
             netToPassOn = mutatedNet;
         }
 
-        Entity* Reproduce(Vector2 spawnLocation)
-        {   
-            CreateNetToPassOn(4);
+        Entity* Reproduce(Vector2 spawnLocation, int rate)
+        { 
+            CreateNetToPassOn(rate);
             ++children;
-            return new Entity(this, spawnLocation);
+            Entity* child = new Entity(this, spawnLocation);
+
+            std::random_device dev;
+            std::mt19937 mt(dev());
+            std::uniform_int_distribution<int> flag(0,1);
+            std::uniform_int_distribution<int> dist(10,100);
+            float childR;
+            float childVD;
+            if(flag(mt))
+            {
+                childR = radius - (rate / dist(mt));
+                if(childR < 5.0f)
+                {
+                    childR = 5.0f;
+                }
+                child->SetRadius(childR);
+            }
+            else
+            {
+                childR = radius + (rate / dist(mt));
+                if(childR > 25.0f)
+                {
+                    childR = 25.0f;
+                }
+                child->SetRadius(childR);
+            }
+            if(flag(mt))
+            {
+                childVD = viewDist - (rate / dist(mt) * 10.0f);
+                if(childVD < 36.0f)
+                {
+                    childVD = 36.0f;
+                }
+                child->SetViewDist(childVD);
+            }
+            else
+            {
+                childVD = viewDist + (rate / dist(mt) * 10.0f);
+                if(childVD > 252.0f)
+                {
+                    childVD = 252.0f;
+                }
+                child->SetViewDist(childVD);
+            }
+            child->SetSpeedMultiplyer(100.0f / (childR * childR));
+            child->SetHealth(childR * childR);
+            child->SetDamage((childR * childR) / 50.0f);
+            child->SetFOV(35640 / (2 * 3.1415 * childVD));
+            
+            return child;
         }
 
         void IncrementTicksSurvived()
@@ -637,6 +795,7 @@ class Entity
         {
             return children;
         }
+
         void SetParent(Entity* inParent)
         {
             parent = inParent;
@@ -675,13 +834,90 @@ class Entity
         {
             ++ticksSinceDinner;
         }
+
         bool GetIsTruman()
         {
             return isTruman;
         }
+        
         void SetIsTruman()
         {
             isTruman = true;
+        }
+
+        int GetLineageCount()
+        {
+            return lineageCount;
+        }
+
+        void SetSpeedMultiplyer(float v)
+        {
+            speedMultiplyer = v;
+        }
+
+        float GetSpeedMultiplyer()
+        {
+            return speedMultiplyer;
+        }
+
+        void SetDamage(float d)
+        {
+            damage = d;
+        }
+
+        float GetDamage()
+        {
+            return damage;
+        }
+        
+        void SetViewDist(float vd)
+        {
+            viewDist = vd;
+        }
+
+        float GetViewDist()
+        {
+            return viewDist;
+        }
+
+        void SetFOV(float f)
+        {
+            fov = f;
+        }
+
+        float GetFOV()
+        {
+            return fov;
+        }
+
+        std::tuple <Entity*, float>* GetSight()
+        {
+            return sight;
+        }
+
+        std::vector<Entity*> GetEntitiesOfInterest()
+        {
+            return entitiesOfInterest;
+        }
+
+        void SetDinnerThisTick()
+        {
+            hadDinnerThisTick = true;
+        }
+
+        void ResetTicksSinceDinner()
+        {
+            ticksSinceDinner = 0;
+        }
+
+        void SetAngularSpeed(float speed)
+        {
+            angularSpeed = speed;
+        }
+
+        float GetOrientation()
+        {
+            return orientation;
         }
 };
 

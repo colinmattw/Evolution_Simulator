@@ -14,6 +14,7 @@ class Neuron
         std::vector<Weight*> outputWeights;
         float bias;
         float value;
+
         
     public:
 
@@ -32,7 +33,7 @@ class Neuron
             value = inval;
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_int_distribution<int> dist (-1000, 1000);
+            std::uniform_int_distribution<int> dist (-500, 500);
             bias = dist(mt) / 250.0f;
         }
 
@@ -73,6 +74,20 @@ class Neuron
             return bias;
         }
 
+        float Sigmoid(float n)
+        {
+            return 1 / (1 + exp(-n));
+        }
+
+        float Tanh(float n)
+        {
+            return tanhf(n);
+        }
+
+        float ReLU(float n)
+        {
+            return fmaxf(0, n);
+        }
         void computeValue()
         {   
             float sum = 0.0f;
@@ -80,9 +95,8 @@ class Neuron
             {
                sum += (inputWeights[i]->getWeight()) * (inputWeights[i]->getConnectionIn()->getValue());
             }
+            
             sum += bias;
-            //std::cout << "before squishification: ";
-            //std::cout << sum << std::endl;
             value = 1 / (1 + exp(-sum));
         }
 };

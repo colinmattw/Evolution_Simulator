@@ -16,7 +16,7 @@ class Weight
         {
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_real_distribution<float> dist (-10.0, 10.0f);
+            std::uniform_real_distribution<float> dist (-2.0, 2.0f);
 
             weight = dist(mt);
             connectionIn = nullptr;
@@ -27,7 +27,7 @@ class Weight
         {
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_real_distribution<float> dist (-10.0, 10.0f);
+            std::uniform_real_distribution<float> dist (-2.0, 2.0f);
 
             weight = dist(mt);
             connectionIn = in;

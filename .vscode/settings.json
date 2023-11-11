@@ -68,6 +68,7 @@
         "__verbose_abort": "cpp",
         "variant": "cpp",
         "compare": "cpp",
-        "concepts": "cpp"
+        "concepts": "cpp",
+        "charconv": "cpp"
     }
 }
