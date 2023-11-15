@@ -4,7 +4,7 @@
 Created by Colin M Wareham
 ---------------------------------------------------
 This project introduced me to several new concepts in programming as well as further developed specific skills:
-1. My firt implementation of a Neural Network from scratch.
+1. My first implementation of a Neural Network from scratch.
 2. My first project to use multiple machine learning techniques.
 3. My largest project to date.
 4. My most extensive implementation of tests.
