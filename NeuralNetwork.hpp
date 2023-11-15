@@ -24,7 +24,7 @@ class NeuralNetwork
                 std::vector<Neuron*> particularLayer;
                 for(int _ = 0; _ < neuronsPerHiddenLayer; ++_)
                 {
-                    Neuron* h = new Neuron();
+                    Neuron* h = new Neuron(true);
                     particularLayer.push_back(h);
                     neurons.push_back(h);
                 }
@@ -51,7 +51,7 @@ class NeuralNetwork
             //build output layer next
             for(int _ = 0; _ < numOfoutputDimensions; ++_)
             {
-                Neuron* y = new Neuron();
+                Neuron* y = new Neuron(false);
                 outputLayer.push_back(y);
                 neurons.push_back(y);
             }
@@ -62,7 +62,7 @@ class NeuralNetwork
                 for(int targetH = 0; targetH < neuronsPerHiddenLayer; ++targetH)
                 {
                     Weight* wy = new Weight();
-                    outputLayer[currentY]->setConnection(hiddenLayers[numOfhiddenLayers-1][targetH], wy, 0);
+                    outputLayer[currentY]->setConnection(hiddenLayers[numOfhiddenLayers-1][targetH], wy, false);
                     weights.push_back(wy);
                 }
             }
@@ -70,7 +70,7 @@ class NeuralNetwork
             //build the input layer
             for(int _ = 0; _ < numOfinputDimensions; ++_)
             {
-                Neuron* x = new Neuron();
+                Neuron* x = new Neuron(false);
                 inputLayer.push_back(x);
                 neurons.push_back(x);
             }
@@ -242,6 +242,16 @@ class NeuralNetwork
             }
 
             return newNet;
+        }
+        
+        std::vector<Neuron*> GetInputLayer()
+        {
+            return inputLayer;
+        }
+
+        std::vector<Neuron*> GetOutputLayer()
+        {
+            return outputLayer;
         }
 
 };

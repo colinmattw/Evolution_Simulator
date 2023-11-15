@@ -17,7 +17,7 @@ class Wall
     public:
 
         //Random wall generation
-        Wall(const bool isItDeadly, const int rangeX1, const int rangeX2, const int rangeY1, const int rangeY2, const int recWidth)
+        Wall(const int rangeX1, const int rangeX2, const int rangeY1, const int rangeY2, const int recWidth)
         {
             width = recWidth;
             std::random_device dev;
@@ -39,7 +39,7 @@ class Wall
         }
 
         //Wall with seeded start
-        Wall(const bool isItDeadly, const int rangeX1, const int rangeX2, const int rangeY1, const int rangeY2, const int recWidth, Vector2 start)
+        Wall(const int rangeX1, const int rangeX2, const int rangeY1, const int rangeY2, const int recWidth, Vector2 start)
         {
             width = recWidth;
             std::random_device dev;
@@ -61,7 +61,7 @@ class Wall
         }
 
         //Wall for outer wall
-        Wall(const int startX, const int startY, const int endX, const int endY, const int recWidth)
+        Wall(const int startX, const int startY, const int endX, const int endY, const int recWidth, bool isOuterWall)
         {
             width = recWidth;
 

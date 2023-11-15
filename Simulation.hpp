@@ -17,11 +17,9 @@ class Simulation
         std::vector<Entity*> preyList;
         std::vector<Entity*> predList;
         std::vector<Food*> foodList;
-        Entity* lastPrey;
-        Entity* lastPred;
-        std::vector<Neuron*> trumanNeurons;
-        std::vector<Weight*> trumanWeights;
+        Entity* truman;
         std::vector<Wall*> outerWalls;
+        bool preyIsTrumanFlag = true;
 
     public:
 
@@ -32,26 +30,61 @@ class Simulation
             preyPop = prey;
             size = {(float)xSize, (float)ySize};
 
+            outerWalls.push_back(new Wall(0, 0, 1000, 0, 20, true));
+            outerWalls.push_back(new Wall(1000, 0, 1000, 1000, 20, true));
+            outerWalls.push_back(new Wall(0, 980, 1000, 980, 20, true));
+            outerWalls.push_back(new Wall(20, 0, 20, 1020, 20, true));
+
+            std::random_device dev;
+            std::mt19937 mt(dev());
+
+            std::uniform_int_distribution<int> newPosX(50, xSize - 50);
+            std::uniform_int_distribution<int> newPosY(50, ySize - 50);
+            for(int _ = 0; _ < 3; ++_)
+            {
+                outerWalls.push_back(new Wall(50, xSize - 50, 50, ySize - 50, 10));
+            }
+
             for(int i = 0; i < predPop; ++i)
             {   
                 Entity* e = new Entity(false, xSize - 50, ySize - 50);
+                for(Wall* wall : outerWalls)
+                {
+                    while(e->CheckCollisionWall(wall, e->GetPos(), e->GetRadius()))
+                    {
+                        e->Teleport({(float)newPosX(mt), (float)newPosY(mt)});
+                    }
+                }
                 predList.push_back(e);
             }
             for(int i = 0; i < preyPop; ++i)
             {   
                 Entity* e = new Entity(true, xSize - 50, ySize - 50);
+                for(Wall* wall : outerWalls)
+                {
+                    while(e->CheckCollisionWall(wall, e->GetPos(), e->GetRadius()))
+                    {
+                        e->Teleport({(float)newPosX(mt), (float)newPosY(mt)});
+                    }
+                }
                 preyList.push_back(e);
             }
-            for(int i = 0; i < preyPop; ++i)
+            for(int i = 0; i < preyPop / 2; ++i)
             {
                 Food* f = new Food(xSize, ySize);
+                for(Wall* wall : outerWalls)
+                {
+                    while(f->CheckCollisionWall(wall))
+                    {
+                        f->Teleport({(float)newPosX(mt), (float)newPosY(mt)});
+                    }
+                }
                 foodList.push_back(f);
             }
 
-            outerWalls.push_back(new Wall(0, 0, 1000, 0, 20));
-            outerWalls.push_back(new Wall(1000, 0, 1000, 1000, 20));
-            outerWalls.push_back(new Wall(0, 980, 1000, 980, 20));
-            outerWalls.push_back(new Wall(20, 0, 20, 1020, 20));
+            predList.front()->SetIsTruman();
+            truman = predList.front();
+
         }
 
         void DoGameTick()
@@ -59,9 +92,10 @@ class Simulation
             //use this for random spawing
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_int_distribution<int> xDist(50, size.x - 50);
-            std::uniform_int_distribution<int> yDist(50, size.y - 50);
-            std::uniform_int_distribution<int> entFlagGen(0, 1);
+
+            std::uniform_int_distribution<int> foodSpawnChance(0, 1000);
+            std::uniform_int_distribution<int> xDist(-10, 10);
+            std::uniform_int_distribution<int> yDist(-10, 10);
 
             std::vector<Entity*> entitiesToKill;
             std::vector<Entity*> entList;
@@ -69,23 +103,23 @@ class Simulation
             entList.reserve(predList.size() + preyList.size());
             entList.insert(entList.end(), predList.begin(), predList.end());
             entList.insert(entList.end(), preyList.begin(), preyList.end());
-            bool entFlag;
-            if(!ticks % 1000)
-            {
-                entFlag = entFlagGen(mt);
-            }
 
-            if(entFlag)
+            //Attempt to spawn in new food if theres space
+            int foodSize = foodList.size();
+            for(int i = 0; i < (preyPop - (foodSize * 2)); ++i)
             {
-                entList[predList.size()]->SetIsTruman();
-                trumanNeurons = entList[predList.size()]->GetNeuralNetwork()->GetNeurons();
-                trumanWeights = entList[predList.size()]->GetNeuralNetwork()->GetWeights();
-            }
-            else
-            {
-                entList.front()->SetIsTruman();
-                trumanNeurons = entList.front()->GetNeuralNetwork()->GetNeurons();
-                trumanWeights = entList.front()->GetNeuralNetwork()->GetWeights();
+                if(foodSpawnChance(mt) < 25)
+                {
+                    Food* f = new Food(size.x, size.y);
+                    for(Wall* wall : outerWalls)
+                    {
+                        while(f->CheckCollisionWall(wall))
+                        {
+                            f->Teleport({(float)xDist(mt) + f->GetPos().x, (float)yDist(mt) + f->GetPos().y});
+                        }
+                    }
+                    foodList.push_back(f);
+                }
             }
 
             for(int currentEntIndex = 0; currentEntIndex < entList.size(); ++currentEntIndex)
@@ -97,6 +131,7 @@ class Simulation
                 //Process the neural network inputs
                 currentEnt->ProcessInput();
             }
+
             for(int currentEntIndex = 0; currentEntIndex < entList.size(); ++currentEntIndex)
             {   
                 //Execute move for each entity
@@ -105,8 +140,20 @@ class Simulation
                 currentEnt->UpdatePosMove(outerWalls);
                 Vector2 currentEntPos = currentEnt->GetPos();
 
-                //Damage everyone for merely existing
-                currentEnt->IncrementHealth(-0.05 * currentEnt->GetDamage());
+                //Damage everyone for merely existing, based on either how idle they are, or how fast they're spinning
+                float linearDamageFactor = 1.1f - (currentEnt->GetNeuralNetwork()->GetOutputLayer()[2]->getValue());
+                float angularDamageFactor = currentEnt->GetNeuralNetwork()->GetOutputLayer()[1]->getValue() + 0.1f;
+                float damageFactor = fmax(linearDamageFactor, angularDamageFactor);
+                currentEnt->IncrementHealth(-0.5f * damageFactor * currentEnt->GetDamage());
+
+                //Damage all entities colliding with walls
+                for(Wall* wall : outerWalls)
+                {
+                    if(currentEnt->CheckCollisionWall(wall, currentEnt->GetPos(), currentEnt->GetRadius() + 5))
+                    {
+                        currentEnt->IncrementHealth(-1.0f * currentEnt->GetDamage());
+                    }
+                }
 
                 //Damage all prey colliding with predator
                 if(!currentEnt->GetIsPrey())
@@ -116,16 +163,16 @@ class Simulation
                         if(CheckCollisionCircles(currentEnt->GetPos(), currentEnt->GetRadius(), preyList[i]->GetPos(), preyList[i]->GetRadius()))
                         {
                             preyList[i]->IncrementHealth(-1.0f * currentEnt->GetDamage());
+                            currentEnt->IncrementHealth(currentEnt->GetDamage());
+                            if(currentEnt->GetHealth() > pow(currentEnt->GetRadius(), 2))
+                            {
+                                currentEnt->SetHealth(pow(currentEnt->GetRadius(), 2));
+                            }
                             if(preyList[i]->GetHealth() <= 0)
                             {
                                 currentEnt->SetDinnerThisTick();
                                 currentEnt->ResetTicksSinceDinner();
                                 currentEnt->SetKillCount(currentEnt->GetKillCount() + 1);
-                                currentEnt->IncrementHealth(pow(preyList[i]->GetRadius(), 2));
-                                if(currentEnt->GetHealth() > pow(currentEnt->GetRadius(), 2))
-                                {
-                                    currentEnt->SetHealth(pow(currentEnt->GetRadius(), 2));
-                                }
                             }
                         }
                     }
@@ -138,13 +185,11 @@ class Simulation
                     {
                         if(CheckCollisionCircles(currentEnt->GetPos(), currentEnt->GetRadius(), foodList[i]->GetPos(), foodList[i]->GetRadius()))
                         {
-                            currentEnt->IncrementHealth( -1.0f * pow(foodList[i]->GetRadius(), 2) / 50.0f);
+                            currentEnt->IncrementHealth(-1.0f * pow(foodList[i]->GetRadius(), 2) / 50.0f);
                         }
                     }
                 }
 
-
-                std::vector<Food*> foodToRemove;
                 //Damage all food colliding with prey
                 if(currentEnt->GetIsPrey())
                 {
@@ -153,38 +198,41 @@ class Simulation
                         if(CheckCollisionCircles(currentEnt->GetPos(), currentEnt->GetRadius(), foodList[i]->GetPos(), foodList[i]->GetRadius()))
                         {
                             foodList[i]->UpdateValueRemaining(currentEnt->GetDamage());
+                            currentEnt->IncrementHealth(pow(foodList[i]->GetRadius(), 2) / 50.0f);
+                            if(currentEnt->GetHealth() > pow(currentEnt->GetRadius(), 2))
+                            {
+                                currentEnt->SetHealth(pow(currentEnt->GetRadius(), 2));
+                            }
                             if(foodList[i]->GetValueRemaining() <= 0)
                             {
                                 currentEnt->SetDinnerThisTick();
                                 currentEnt->ResetTicksSinceDinner();
                                 currentEnt->SetKillCount(currentEnt->GetKillCount() + 1);
-                                currentEnt->IncrementHealth(pow(foodList[i]->GetRadius(), 2));
-                                if(currentEnt->GetHealth() > pow(currentEnt->GetRadius(), 2))
-                                {
-                                    currentEnt->SetHealth(pow(currentEnt->GetRadius(), 2));
-                                }
-
-                                foodToRemove.push_back(foodList[i]);
-                        
                             }
                         }
                     }
                 }
+
+                //Degrade food
+                for(Food* food : foodList)
+                {
+                    float r = food->GetRadius();
+                    food->UpdateValueRemaining((r * r) / 500000.0f);
+                }
                 
                 //Remove the eaten food from the simulation
-                for(int i = 0; i < foodToRemove.size(); ++i)
+                for(int i = 0; i < foodList.size(); ++i)
                 {
                     for(int j = 0; j < foodList.size(); ++j)
                     {
-                        if(foodToRemove[i] == foodList[j])
+                        if(foodList[j]->GetValueRemaining() <= 0)
                         {
-                            delete foodList[i];
-                            foodToRemove[i] = nullptr;
+                            delete foodList[j];
+                            foodList[j] = nullptr;
                             foodList.erase(std::remove(foodList.begin(), foodList.end(), nullptr), foodList.end());
                         }
                     }
                 }
-                foodToRemove.clear();
 
                 //Attempt kill
                 if(currentEnt->GetHealth() <= 0)
@@ -202,6 +250,10 @@ class Simulation
             {
                 Entity* currentEnt = entitiesToKill[entIndex];
                 currentEnt->DeleteNets();
+                if(currentEnt->GetIsTruman())
+                {
+                    truman = nullptr;
+                }
                 if(currentEnt->GetIsPrey())
                 {
                     delete currentEnt;
@@ -230,11 +282,19 @@ class Simulation
             entitiesToKill.clear();
 
             //Incremnt gameTicksSurvived for everyone thats made it this far and attempt reproduction
-            if(preyList.size() == 0)
+            if(preyList.size() < preyPop)
             {
-                for(int _ = 0; _ < preyPop / 2; ++_)
+                for(int _ = 0; _ < preyPop - preyList.size(); ++_)
                 {
-                    preyList.push_back(new Entity({(float)xDist(mt), (float)yDist(mt)}, true));
+                    Entity* e = new Entity(true, size.x - 50, size.y - 50);
+                    for(Wall* wall : outerWalls)
+                    {
+                        while(e->CheckCollisionWall(wall, e->GetPos(), e->GetRadius()))
+                        {
+                            e->Teleport({(float)xDist(mt) + e->GetPos().x, (float)yDist(mt) + e->GetPos().y});
+                        }
+                    }
+                    preyList.push_back(e);
                 }
             }
             else
@@ -242,40 +302,53 @@ class Simulation
                 for(int i = 0; i < preyList.size(); ++i)
                 {
                     preyList[i]->IncrementTicksSurvived();
-                    if((preyList[i]->GetTicksSurvived() % 300 == 0) && ((preyList[i]->GetHealth()) > (pow(preyList[i]->GetRadius(), 2)) * 0.75f))
+                    if((preyList[i]->GetHealth() > pow(preyList[i]->GetRadius(), 2) * 0.9f) && (preyList[i]->GetTicksSinceReproduction() > 50))
                     {   
-                        if(preyList.size() < (4 * preyPop))
+                        if(preyList.size() < (2 * preyPop))
                         {   
-                            preyList.push_back(preyList[i]->Reproduce({preyList[i]->GetPos().x, preyList[i]->GetPos().y}, 60));
+                            preyList.push_back(preyList[i]->Reproduce({preyList[i]->GetPos().x + xDist(mt), preyList[i]->GetPos().y + yDist(mt)}, 40));
                         }
+                    }
+                    else
+                    {
+                        preyList[i]->IncrementTicksSinceReproduction();
                     }
                 }
             }
-            if(predList.size() == 0)
+            if(predList.size() < predPop)
             {   
-
-                for(int _ = 0; _ < predPop / 2; ++_)
+                for(int _ = 0; _ < predPop - predList.size(); ++_)
                 {
-                    predList.push_back(new Entity({(float)xDist(mt), (float)yDist(mt)}, false));
+                    Entity* e = new Entity(false, size.x - 50, size.y - 50);
+                        for(Wall* wall : outerWalls)
+                        {
+                            while(e->CheckCollisionWall(wall, e->GetPos(), e->GetRadius()))
+                            {
+                                e->Teleport({(float)xDist(mt) + e->GetPos().x, (float)yDist(mt) + e->GetPos().y});
+                            }
+                        }
+                        predList.push_back(e);
                 }
-                //std::cout << "Pred: " << predList[0]->GetNeuralNetwork()->NetsSimilarityPercentage(lastPred->GetNeuralNetwork()) << std::endl;
             }
             else
             {
                 for(int i = 0; i < predList.size(); ++i)
                 {   
                     predList[i]->IncrementTicksSurvived();
-                    if((predList[i]->GetTicksSurvived() % 300 == 0) && ((predList[i]->GetHealth()) > (pow(predList[i]->GetRadius(), 2)) * 0.75f))
+                    if((predList[i]->GetHealth() > pow(predList[i]->GetRadius(), 2) * 0.9f) && (predList[i]->GetTicksSinceReproduction() > 50))
                     {
-                        if(predList.size() < (4 * predPop))
+                        if(predList.size() < (2 * predPop))
                         {
-                            predList.push_back(predList[i]->Reproduce({predList[i]->GetPos().x, predList[i]->GetPos().y}, 60));
+                            predList.push_back(predList[i]->Reproduce({predList[i]->GetPos().x + xDist(mt), predList[i]->GetPos().y + xDist(mt)}, 40));
                         }
+                    }
+                    else
+                    {
+                        predList[i]->IncrementTicksSinceReproduction();
                     }
                 }
             }
             ++ticks;
-
         }
 
 
@@ -288,22 +361,9 @@ class Simulation
             return predList;
         }
 
-        Entity* GetLastPrey()
+        Entity* GetTruman()
         {
-            return lastPrey;
-        }
-
-        Entity* LastPred()
-        {
-            return lastPred;
-        }
-        std::vector<Neuron*> GetTrumanNeurons()
-        {
-            return trumanNeurons;
-        }
-         std::vector<Weight*> GetTrumanWeights()
-        {
-            return trumanWeights;
+            return truman;
         }
 
         std::vector<Wall*> GetWalls()
@@ -314,6 +374,67 @@ class Simulation
         std::vector<Food*> GetFoodList()
         {
             return foodList;
+        }
+
+        void SetTruman(Vector2 mouseCoords)
+        {
+            for(Entity* prey : preyList)
+            {
+                prey->SetTrumanFalse();
+            }
+            for(Entity* pred : predList)
+            {
+                pred->SetTrumanFalse();
+            }
+            for(Entity* prey : preyList)
+            {
+                if(CheckCollisionPointCircle(mouseCoords, prey->GetPos(), prey->GetRadius()))
+                {
+                    prey->SetIsTruman();
+                    truman = prey;
+                    break;
+                }
+            }
+            for(Entity* pred : predList)
+            {
+                if(CheckCollisionPointCircle(mouseCoords, pred->GetPos(), pred->GetRadius()))
+                {
+                    pred->SetIsTruman();
+                    truman = pred;
+                    break;
+                }
+            }
+        }
+
+        void DrawSim()
+        {
+            //Draw the walls
+            for(Wall* wall : outerWalls)
+            {
+                wall->DrawWall();
+            }
+            //Draw the food
+            for(Food* f : foodList)
+            {
+                f->DrawFood();
+            }
+            //Draw the little guys
+            for(Entity* e : predList)
+            {   
+                e->drawEntity();
+            }
+            for(Entity* e : preyList)
+            {   
+                e->drawEntity();
+            }
+            //Draw truman's sight data
+            if(truman)
+            {
+                for(Vector2 p : truman->GetSightPoints())
+                {
+                    DrawCircle(p.x, p.y, 2.0f, GRAY);
+                }
+            }
         }
         
 

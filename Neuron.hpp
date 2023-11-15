@@ -14,27 +14,46 @@ class Neuron
         std::vector<Weight*> outputWeights;
         float bias;
         float value;
+        bool isHidden;
 
         
     public:
 
-        Neuron()
+        Neuron(bool hidden)
         {
             value = 0.0f;
 
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_int_distribution<int> dist (-1000, 1000);
-            bias = dist(mt) / 250.0f;
+            std::uniform_int_distribution<int> dist (-5000, 5000);
+            isHidden = hidden;
+            if(isHidden)
+            {
+                bias = dist(mt) / 500.0f;
+            }
+            else
+            {
+                bias = 0.0f;
+            }
+
+
 
         }
-        Neuron(float inval)
+        Neuron(float inval, bool hidden)
         {
             value = inval;
             std::random_device dev;
             std::mt19937 mt(dev());
-            std::uniform_int_distribution<int> dist (-500, 500);
-            bias = dist(mt) / 250.0f;
+            std::uniform_int_distribution<int> dist (-1000, 1000);
+            isHidden = hidden;
+            if(isHidden)
+            {
+                bias = dist(mt) / 500.0f;
+            }
+            else
+            {
+                bias = 0.0f;
+            }
         }
 
         void setConnection(Neuron* target, Weight* weight, bool isOutboundConnection)
@@ -79,11 +98,6 @@ class Neuron
             return 1 / (1 + exp(-n));
         }
 
-        float Tanh(float n)
-        {
-            return tanhf(n);
-        }
-
         float ReLU(float n)
         {
             return fmaxf(0, n);
@@ -95,9 +109,21 @@ class Neuron
             {
                sum += (inputWeights[i]->getWeight()) * (inputWeights[i]->getConnectionIn()->getValue());
             }
-            
-            sum += bias;
-            value = 1 / (1 + exp(-sum));
+
+            if(!isHidden)
+            {
+                value = Sigmoid(sum);
+            }
+            else
+            {
+                sum += bias;
+                value = ReLU(sum);
+            }
+        }
+
+        bool GetIsHidden()
+        {
+            return isHidden;
         }
 };
 #endif
