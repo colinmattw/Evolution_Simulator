@@ -378,6 +378,7 @@ class Simulation
 
         void SetTruman(Vector2 mouseCoords)
         {
+            truman = nullptr;
             for(Entity* prey : preyList)
             {
                 prey->SetTrumanFalse();
@@ -392,7 +393,7 @@ class Simulation
                 {
                     prey->SetIsTruman();
                     truman = prey;
-                    break;
+                    return;
                 }
             }
             for(Entity* pred : predList)
@@ -401,7 +402,7 @@ class Simulation
                 {
                     pred->SetIsTruman();
                     truman = pred;
-                    break;
+                    return;
                 }
             }
         }
